@@ -1,6 +1,7 @@
 # NocoDB + Traefik + Let's Encrypt on Docker Compose
 
 [![Deployment Verification](https://github.com/heyvaldemar/nocodb-traefik-letsencrypt-docker-compose/actions/workflows/deployment-verification.yml/badge.svg?branch=main)](https://github.com/heyvaldemar/nocodb-traefik-letsencrypt-docker-compose/actions/workflows/deployment-verification.yml?query=branch%3Amain)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15981/badge)](https://www.bestpractices.dev/projects/15981)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## Contents
