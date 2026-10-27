@@ -1,0 +1,7 @@
+# tests/e2e-security.sh only: the shipped key, and allowed to reach this
+# host's private networks, so the test database inside the stack can be read
+# through the connection the key encrypted. Never deploy with this file.
+services:
+  nocodb:
+    environment:
+      NC_ALLOW_LOCAL_EXTERNAL_DBS: "true"

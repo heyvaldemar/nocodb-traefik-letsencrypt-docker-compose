@@ -1,0 +1,455 @@
+# Image pins live HERE, as interpolation defaults, so `git pull` (or
+# re-downloading this file) delivers the exact version combination this
+# repository has tested, with no .env editing required. Setting the matching
+# variable in .env overrides the default for anyone who wants to pin
+# differently; .env itself carries only secrets and deliberate overrides.
+# CI (Trivy scans, check-pin-freshness, the ephemeral test .env) reads the
+# pins from these lines: this block is the single source of truth.
+x-images:
+  traefik: &traefik-image ${TRAEFIK_IMAGE_TAG:-traefik:${TRAEFIK_IMAGE_VERSION:-3.7@sha256:c8a121e4bb1347e8fd52657fab12f2cb70b68f8a018895e2068f92c9e519b9c2}}
+  postgres: &postgres-image ${NOCODB_POSTGRES_IMAGE_TAG:-postgres:${NOCODB_POSTGRES_IMAGE_VERSION:-17@sha256:b8faeff7712663c2773a190181e1246e37e364b887611c04658c28b44e2408fe}}
+  redis: &redis-image ${NOCODB_REDIS_IMAGE_TAG:-redis:${NOCODB_REDIS_IMAGE_VERSION:-7.4@sha256:44960b3100c48159a66d28c18b0588c193492e25f7551d60e51dd464fc3eca5b}}
+  nocodb: &nocodb-image ${NOCODB_IMAGE_TAG:-nocodb/nocodb:${NOCODB_IMAGE_VERSION:-2026.10.0@sha256:e8fee91b205b7c51df6e35a9d890d8b68b216e987ed3feb387c5478dff6df951}}
+
+networks:
+  nocodb-network:
+    external: true
+  traefik-network:
+    external: true
+
+volumes:
+  nocodb-data:
+  redis-data:
+  nocodb-postgres:
+  nocodb-postgres-backup:
+  nocodb-data-backups:
+  nocodb-database-backups:
+  traefik-certificates:
+
+services:
+  postgres:
+    image: *postgres-image
+    # Hardening: no privilege escalation via setuid binaries
+    security_opt:
+      - no-new-privileges:true
+    # Drop every Linux capability; add back only what this image's
+    # entrypoint needs (chown its data directory, drop to its service user).
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_READ_SEARCH
+      - FOWNER
+      - SETGID
+      - SETUID
+    # Docker's default is ten seconds, then SIGKILL. That is not always enough
+    # for PostgreSQL to write its shutdown checkpoint; killed halfway, the next
+    # start does crash recovery. Sixty seconds, overridable in .env.
+    stop_grace_period: ${NOCODB_POSTGRES_STOP_GRACE_PERIOD:-60s}
+    # Resource limits as .env-overridable defaults (e.g. NOCODB_POSTGRES_MEMORY_LIMIT=2g);
+    # the override survives every git pull.
+    deploy:
+      resources:
+        limits:
+          memory: ${NOCODB_POSTGRES_MEMORY_LIMIT:-1g}
+          cpus: "${NOCODB_POSTGRES_CPU_LIMIT:-1.0}"
+        reservations:
+          memory: ${NOCODB_POSTGRES_MEMORY_RESERVATION:-128m}
+          cpus: "${NOCODB_POSTGRES_CPU_RESERVATION:-0.25}"
+    volumes:
+      - nocodb-postgres:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: ${NOCODB_DB_NAME:-nocodbdb}
+      POSTGRES_USER: ${NOCODB_DB_USER:-nocodbdbuser}
+      POSTGRES_PASSWORD: ${NOCODB_DB_PASSWORD:?set in .env - see .env.example for generation command}
+    networks:
+      - nocodb-network
+    healthcheck:
+      test: [ "CMD", "pg_isready", "-q", "-d", "${NOCODB_DB_NAME:-nocodbdb}", "-U", "${NOCODB_DB_USER:-nocodbdbuser}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  # OPTIONAL, AND OFF UNLESS ASKED FOR. NocoDB keeps its cache in the process
+  # when it has no Redis, which is enough for one instance on one host; Redis
+  # matters once several NocoDB processes share one database. To run it, set
+  # both lines in .env (see .env.example): COMPOSE_PROFILES=redis starts this
+  # service, and NOCODB_REDIS_URL=redis://redis:6379 points NocoDB at it.
+  redis:
+    image: *redis-image
+    profiles:
+      - redis
+    # Hardening: no privilege escalation via setuid binaries
+    security_opt:
+      - no-new-privileges:true
+    # Drop every Linux capability; add back only what this image's
+    # entrypoint needs (chown its data directory, drop to its service user).
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+    # Redis saves its dataset on the way out; ten seconds can cut that short.
+    stop_grace_period: ${NOCODB_REDIS_STOP_GRACE_PERIOD:-60s}
+    # Resource limits as .env-overridable defaults (e.g. NOCODB_REDIS_MEMORY_LIMIT=512m);
+    # the override survives every git pull.
+    deploy:
+      resources:
+        limits:
+          memory: ${NOCODB_REDIS_MEMORY_LIMIT:-256m}
+          cpus: "${NOCODB_REDIS_CPU_LIMIT:-0.5}"
+        reservations:
+          memory: ${NOCODB_REDIS_MEMORY_RESERVATION:-32m}
+          cpus: "${NOCODB_REDIS_CPU_RESERVATION:-0.1}"
+    volumes:
+      - redis-data:/data
+    networks:
+      - nocodb-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  # THE DATA VOLUME, GIVEN TO THE USER NOCODB RUNS AS. NocoDB's image runs as
+  # root and declares no volume, so a fresh named volume at /usr/app/data comes
+  # up owned by root, and the unprivileged process below could not write an
+  # attachment into it. This one-shot container gives the directory to uid
+  # 1000 (the image's own `node` user) with the one capability that takes,
+  # before NocoDB starts, on every `up`. It reaches no network.
+  nocodb-init:
+    image: *nocodb-image
+    user: "0:0"
+    entrypoint: ["sh", "-c", "chown 1000:1000 /usr/app/data && echo 'nocodb-init: /usr/app/data is owned by 1000:1000'"]
+    network_mode: none
+    # Hardening: no privilege escalation via setuid binaries
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+          cpus: "0.25"
+    volumes:
+      - nocodb-data:/usr/app/data
+    restart: "no"
+
+  nocodb:
+    image: *nocodb-image
+    # AN UNPRIVILEGED USER WITH NOTHING. The image runs as root; here it runs
+    # as its own `node` user (uid 1000), with every Linux capability dropped
+    # and no way to gain one through a setuid binary. CI reads the running
+    # process's uid and effective capabilities.
+    user: "1000:1000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Resource limits as .env-overridable defaults (e.g. NOCODB_MEMORY_LIMIT=4g);
+    # the override survives every git pull. NocoDB's own start script keeps
+    # V8 from optimising its SQL parser, because doing so takes about 1 GB;
+    # the ceiling leaves room for that and for large imports.
+    deploy:
+      resources:
+        limits:
+          memory: ${NOCODB_MEMORY_LIMIT:-2g}
+          cpus: "${NOCODB_CPU_LIMIT:-1.0}"
+        reservations:
+          memory: ${NOCODB_MEMORY_RESERVATION:-512m}
+          cpus: "${NOCODB_CPU_RESERVATION:-0.25}"
+    volumes:
+      # Attachments (nc/uploads) and NocoDB's own files. The tables, the rows
+      # and every setting live in PostgreSQL; both are backed up below.
+      - nocodb-data:/usr/app/data
+    environment:
+      # The metadata and the data of every base made in NocoDB. The password
+      # goes into a URL here, so .env.example generates it as hex.
+      NC_DB: "pg://postgres:5432?u=${NOCODB_DB_USER:-nocodbdbuser}&p=${NOCODB_DB_PASSWORD}&d=${NOCODB_DB_NAME:-nocodbdb}"
+      # THE SUPER ADMIN EXISTS BEFORE THE SITE DOES. Without these, NocoDB
+      # makes super admin of whoever signs up first, which on a public
+      # hostname is a race against everyone who finds it. With them, the
+      # account is created on the first start and its email and password are
+      # set again from here on every start, so .env is where they change.
+      NC_ADMIN_EMAIL: ${NOCODB_ADMIN_EMAIL:?set in .env - see .env.example}
+      NC_ADMIN_PASSWORD: ${NOCODB_ADMIN_PASSWORD:?set in .env - see .env.example for generation command}
+      # THE SIGNING SECRET LIVES OUTSIDE THE DATABASE. Unset, NocoDB makes one
+      # and stores it in the database itself (nc_store, nc_auth_jwt_secret),
+      # so every database backup would carry the key that signs this
+      # instance's sessions. From .env it is in no backup.
+      NC_AUTH_JWT_SECRET: ${NOCODB_JWT_SECRET:?set in .env - see .env.example for generation command}
+      # THE PASSWORDS OF THE DATABASES YOU CONNECT ARE ENCRYPTED. NocoDB can
+      # front other databases, and keeps each one's connection in its own
+      # database. Without this key that connection is plain JSON, password
+      # included, in every backup; CI shows it there, then sets the key and
+      # shows it gone. With the key set, NocoDB encrypts what it stored
+      # before on the next start. Keep the key with the .env, not with the
+      # backups: a restore needs the same key to open those connections.
+      NC_CONNECTION_ENCRYPT_KEY: ${NOCODB_CONNECTION_ENCRYPT_KEY:?set in .env - see .env.example for generation command}
+      # NO CONNECTIONS INTO THIS HOST'S PRIVATE NETWORKS. NocoDB refuses a
+      # data source on a private address unless this is true, and that
+      # includes the PostgreSQL above, which holds every account's password
+      # hash; CI asks for it and is refused. Set it to true in .env only to
+      # connect a database on your own LAN, knowing that every user who may
+      # add a data source can then reach that network from this container.
+      NC_ALLOW_LOCAL_EXTERNAL_DBS: ${NOCODB_ALLOW_LOCAL_EXTERNAL_DBS:-false}
+      # ATTACHMENTS ANSWER ONLY TO SIGNED, EXPIRING LINKS. Off, an
+      # attachment's plain URL is served to anyone who has it. CI fetches the
+      # same file both ways.
+      NC_SECURE_ATTACHMENTS: "true"
+      # ONE PROXY IS TRUSTED. NocoDB trusts no X-Forwarded-For by default, so
+      # behind Traefik its audit log names Traefik's container as the address
+      # of every change anyone makes: measured, and CI shows it both ways.
+      # One hop is this topology: NocoDB is published nowhere, so every
+      # request arrives through Traefik. A client's own X-Forwarded-For does
+      # not get through either: Traefik trusts none from outside and replaces
+      # it, and CI sends a forged one and reads the address the log keeps.
+      NC_TRUST_PROXY: "1"
+      NC_SITE_URL: https://${NOCODB_HOSTNAME:?set in .env - see .env.example}
+      NC_PUBLIC_URL: https://${NOCODB_HOSTNAME}
+      NC_DISABLE_TELE: "true"
+      # Empty unless Redis is turned on (see the redis service above).
+      NC_REDIS_URL: ${NOCODB_REDIS_URL:-}
+      # Mail for invites and password resets. Empty, NocoDB runs and sends
+      # nothing; copy invite links from the UI instead.
+      NC_SMTP_FROM: ${NOCODB_SMTP_FROM:-}
+      NC_SMTP_HOST: ${NOCODB_SMTP_HOST:-}
+      NC_SMTP_PORT: ${NOCODB_SMTP_PORT:-587}
+      NC_SMTP_USERNAME: ${NOCODB_SMTP_USERNAME:-}
+      NC_SMTP_PASSWORD: ${NOCODB_SMTP_PASSWORD:-}
+      NC_SMTP_SECURE: ${NOCODB_SMTP_SECURE:-false}
+    networks:
+      - nocodb-network
+      - traefik-network
+    healthcheck:
+      # NOT /api/v1/health. That endpoint answers 200 from the process alone:
+      # measured on 2026.10.0, it said OK with PostgreSQL stopped. This one
+      # reads the database, and answers 400 ERR_DATABASE_OP_FAILED when it
+      # cannot. CI stops PostgreSQL and watches each answer.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/v2/meta/nocodb/info"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+    labels:
+      # Enable Traefik for this container
+      - "traefik.enable=true"
+      # Match incoming requests on a specific hostname
+      - "traefik.http.routers.nocodb.rule=Host(`${NOCODB_HOSTNAME}`)"
+      # Assign the router to a named Traefik service
+      - "traefik.http.routers.nocodb.service=nocodb"
+      # Use the 'websecure' (HTTPS) entry point
+      - "traefik.http.routers.nocodb.entrypoints=websecure"
+      # Define the internal container port for routing
+      - "traefik.http.services.nocodb.loadbalancer.server.port=8080"
+      # Enable TLS on this router
+      - "traefik.http.routers.nocodb.tls=true"
+      # Use Let's Encrypt for certificate management
+      - "traefik.http.routers.nocodb.tls.certresolver=letsencrypt"
+      # Pass the original Host header to the container
+      - "traefik.http.services.nocodb.loadbalancer.passhostheader=true"
+      # Apply a compression middleware
+      - "traefik.http.routers.nocodb.middlewares=compresstraefik"
+      # Define settings for the compression middleware
+      - "traefik.http.middlewares.compresstraefik.compress=true"
+      # Specify which Docker network Traefik should use for routing
+      - "traefik.docker.network=traefik-network"
+    restart: unless-stopped
+    depends_on:
+      nocodb-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      traefik:
+        condition: service_healthy
+
+  traefik:
+    image: *traefik-image
+    # Hardening: no privilege escalation via setuid binaries
+    security_opt:
+      - no-new-privileges:true
+    # Drop every Linux capability; add back only what binding :80/:443 needs.
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    # Resource limits as .env-overridable defaults (e.g. TRAEFIK_MEMORY_LIMIT=512m);
+    # the override survives every git pull.
+    deploy:
+      resources:
+        limits:
+          memory: ${TRAEFIK_MEMORY_LIMIT:-256m}
+          cpus: "${TRAEFIK_CPU_LIMIT:-0.5}"
+        reservations:
+          memory: ${TRAEFIK_MEMORY_RESERVATION:-64m}
+          cpus: "${TRAEFIK_CPU_RESERVATION:-0.1}"
+    command:
+      # Set the log level (DEBUG, INFO, WARN, ERROR)
+      - "--log.level=${TRAEFIK_LOG_LEVEL:-WARN}"
+      # Enable the built-in API and web-based dashboard
+      - "--api.dashboard=true"
+      # Enable the /ping endpoint so we can health-check Traefik
+      - "--ping=true"
+      # Assign the /ping endpoint to a dedicated entry point on port 8082
+      - "--ping.entrypoint=ping"
+      - "--entrypoints.ping.address=:8082"
+      # Define the primary HTTP entry point on port 80
+      - "--entrypoints.web.address=:80"
+      # Define the secure (HTTPS) entry point on port 443
+      - "--entrypoints.websecure.address=:443"
+      # Timeouts on the HTTPS entry point. Unset, they are Traefik's own
+      # defaults; set them in .env to tune (see .env.example). Raise the read
+      # timeout for large CSV imports and attachments on slow links.
+      - "--entrypoints.websecure.transport.respondingTimeouts.readTimeout=${TRAEFIK_READ_TIMEOUT:-60s}"
+      - "--entrypoints.websecure.transport.respondingTimeouts.writeTimeout=${TRAEFIK_WRITE_TIMEOUT:-0s}"
+      - "--entrypoints.websecure.transport.respondingTimeouts.idleTimeout=${TRAEFIK_IDLE_TIMEOUT:-180s}"
+      # HTTP -> HTTPS redirect at entrypoint level
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      # Enable the Docker provider to detect containers and their labels
+      - "--providers.docker=true"
+      # Point Traefik to the Docker socket
+      - "--providers.docker.endpoint=unix:///var/run/docker.sock"
+      # Prevent automatic exposure of all containers; only expose containers
+      # with "traefik.enable=true"
+      - "--providers.docker.exposedbydefault=false"
+      # Use ACME (Let's Encrypt) to generate/renew certificates via TLS challenge
+      - "--certificatesresolvers.letsencrypt.acme.tlschallenge=true"
+      # The email address used by Let's Encrypt for renewal notices
+      - "--certificatesresolvers.letsencrypt.acme.email=${TRAEFIK_ACME_EMAIL:?set in .env - see .env.example}"
+      # The file where ACME certificates are stored inside the container
+      - "--certificatesresolvers.letsencrypt.acme.storage=/etc/traefik/acme/acme.json"
+      # Enable Prometheus metrics
+      - "--metrics.prometheus=true"
+      # Configure Prometheus histogram buckets
+      - "--metrics.prometheus.buckets=0.1,0.3,1.2,5.0"
+      # Check for newer Traefik versions and optionally log that info
+      - "--global.checknewversion=true"
+      # Disable sending anonymous usage data to the Traefik maintainers
+      - "--global.sendanonymoususage=false"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-certificates:/etc/traefik/acme
+    networks:
+      - traefik-network
+    ports:
+      - "80:80"
+      - "443:443"
+    healthcheck:
+      test: ["CMD", "wget", "http://localhost:8082/ping","--spider"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    labels:
+      # Enable Traefik for this container
+      - "traefik.enable=true"
+      # A router to expose the Traefik dashboard
+      - "traefik.http.routers.dashboard.rule=Host(`${TRAEFIK_HOSTNAME:?set in .env - see .env.example}`)"
+      - "traefik.http.routers.dashboard.entrypoints=websecure"
+      - "traefik.http.routers.dashboard.tls=true"
+      - "traefik.http.routers.dashboard.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.dashboard.service=api@internal"
+      # Basic Authentication for the Traefik dashboard
+      - "traefik.http.routers.dashboard.middlewares=authtraefik"
+      - "traefik.http.middlewares.authtraefik.basicauth.users=${TRAEFIK_BASIC_AUTH:?set in .env - see .env.example for htpasswd generation}"
+      # Specify the internal server port to the dashboard service
+      - "traefik.http.services.dashboard.loadbalancer.server.port=8080"
+      # Pass the original Host header to the backend
+      - "traefik.http.services.dashboard.loadbalancer.passhostheader=true"
+    restart: unless-stopped
+
+  backups:
+    image: *postgres-image
+    # Hardening: no privilege escalation via setuid binaries
+    security_opt:
+      - no-new-privileges:true
+    # Drop every Linux capability; add back only what reading NocoDB's
+    # files as root and writing archives that keep their owners needs.
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    # Resource limits as .env-overridable defaults (e.g. NOCODB_BACKUPS_MEMORY_LIMIT=1g);
+    # the override survives every git pull.
+    deploy:
+      resources:
+        limits:
+          memory: ${NOCODB_BACKUPS_MEMORY_LIMIT:-256m}
+          cpus: "${NOCODB_BACKUPS_CPU_LIMIT:-0.5}"
+        reservations:
+          memory: ${NOCODB_BACKUPS_MEMORY_RESERVATION:-32m}
+          cpus: "${NOCODB_BACKUPS_CPU_RESERVATION:-0.1}"
+    # Every cycle: the database, then the attachments. Each is written under
+    # a .partial name, READ BACK, and only then renamed: an exit code is not a
+    # statement about whether the file it produced opens. gzip -t reads the
+    # whole dump; tar -tzf reads the whole archive, not only its compression.
+    # Each artefact logs OK or FAILED; a failed one is kept as .failed for
+    # diagnosis. A retention of 0 days turns pruning off.
+    command: >-
+      bash -c 'set -o pipefail;
+      sleep "$$NOCODB_BACKUP_INIT_SLEEP";
+      while true; do
+        STAMP="$$(date +%Y-%m-%d_%H-%M)";
+        DB_FILE="$$NOCODB_POSTGRES_BACKUPS_PATH/$$NOCODB_POSTGRES_BACKUP_NAME-$$STAMP.gz";
+        echo "[$$(date -Iseconds)] Starting database backup to $$DB_FILE";
+        if pg_dump -h postgres -p 5432 -d "$$NOCODB_DB_NAME" -U "$$NOCODB_DB_USER" | gzip > "$$DB_FILE.partial" && gzip -t "$$DB_FILE.partial"; then
+          mv "$$DB_FILE.partial" "$$DB_FILE";
+          echo "[$$(date -Iseconds)] Database backup OK: $$DB_FILE ($$(stat -c %s "$$DB_FILE") bytes)";
+        else
+          echo "[$$(date -Iseconds)] Database backup FAILED - partial file kept as $$DB_FILE.failed for diagnosis" >&2;
+          mv "$$DB_FILE.partial" "$$DB_FILE.failed" 2>/dev/null || true;
+        fi;
+        DATA_FILE="$$NOCODB_DATA_BACKUPS_PATH/$$NOCODB_DATA_BACKUP_NAME-$$STAMP.tar.gz";
+        echo "[$$(date -Iseconds)] Starting data backup to $$DATA_FILE";
+        tar -zcpf "$$DATA_FILE.partial" -C / usr/app/data; RC=$$?;
+        if { [ "$$RC" -eq 0 ] || [ "$$RC" -eq 1 ]; } && tar -tzf "$$DATA_FILE.partial" > /dev/null 2>&1; then
+          mv "$$DATA_FILE.partial" "$$DATA_FILE";
+          echo "[$$(date -Iseconds)] Data backup OK: $$DATA_FILE ($$(stat -c %s "$$DATA_FILE") bytes)$$([ "$$RC" -eq 1 ] && echo " - some files changed while being read")";
+        else
+          echo "[$$(date -Iseconds)] Data backup FAILED - partial file kept as $$DATA_FILE.failed for diagnosis" >&2;
+          mv "$$DATA_FILE.partial" "$$DATA_FILE.failed" 2>/dev/null || true;
+        fi;
+        if [ "$${NOCODB_POSTGRES_BACKUP_PRUNE_DAYS:-0}" -ge 1 ]; then
+          find "$$NOCODB_POSTGRES_BACKUPS_PATH" -type f -name "$$NOCODB_POSTGRES_BACKUP_NAME-*" -mtime "+$$NOCODB_POSTGRES_BACKUP_PRUNE_DAYS" -delete;
+        fi;
+        if [ "$${NOCODB_DATA_BACKUP_PRUNE_DAYS:-0}" -ge 1 ]; then
+          find "$$NOCODB_DATA_BACKUPS_PATH" -type f -name "$$NOCODB_DATA_BACKUP_NAME-*" -mtime "+$$NOCODB_DATA_BACKUP_PRUNE_DAYS" -delete;
+        fi;
+        sleep "$$NOCODB_BACKUP_INTERVAL";
+      done'
+    volumes:
+      - nocodb-postgres-backup:/var/lib/postgresql/data
+      - nocodb-data:/usr/app/data
+      - nocodb-data-backups:${NOCODB_DATA_BACKUPS_PATH:-/srv/nocodb-application-data/backups}
+      - nocodb-database-backups:${NOCODB_POSTGRES_BACKUPS_PATH:-/srv/nocodb-postgres/backups}
+    environment:
+      NOCODB_DB_NAME: ${NOCODB_DB_NAME:-nocodbdb}
+      NOCODB_DB_USER: ${NOCODB_DB_USER:-nocodbdbuser}
+      PGPASSWORD: ${NOCODB_DB_PASSWORD}
+      NOCODB_BACKUP_INIT_SLEEP: ${NOCODB_BACKUP_INIT_SLEEP:-30m}
+      NOCODB_BACKUP_INTERVAL: ${NOCODB_BACKUP_INTERVAL:-24h}
+      NOCODB_POSTGRES_BACKUP_PRUNE_DAYS: ${NOCODB_POSTGRES_BACKUP_PRUNE_DAYS:-7}
+      NOCODB_DATA_BACKUP_PRUNE_DAYS: ${NOCODB_DATA_BACKUP_PRUNE_DAYS:-7}
+      NOCODB_POSTGRES_BACKUPS_PATH: ${NOCODB_POSTGRES_BACKUPS_PATH:-/srv/nocodb-postgres/backups}
+      NOCODB_DATA_BACKUPS_PATH: ${NOCODB_DATA_BACKUPS_PATH:-/srv/nocodb-application-data/backups}
+      NOCODB_DATA_PATH: /usr/app/data
+      NOCODB_POSTGRES_BACKUP_NAME: ${NOCODB_POSTGRES_BACKUP_NAME:-nocodb-postgres-backup}
+      NOCODB_DATA_BACKUP_NAME: ${NOCODB_DATA_BACKUP_NAME:-nocodb-application-data-backup}
+    networks:
+      - nocodb-network
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy

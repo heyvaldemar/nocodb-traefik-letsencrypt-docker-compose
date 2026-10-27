@@ -1,0 +1,30 @@
+# Security Policy
+
+## Supported versions
+
+| Version                                        | Status             |
+|------------------------------------------------|--------------------|
+| Current `main` and the latest tagged release   | :white_check_mark: |
+| Older tags without a recent rebuild            | :x:                |
+
+Fixes land on `main` and ship as a new tag; older tags are not patched in place.
+
+## Reporting a vulnerability
+
+Report privately through GitHub: **Security → Report a vulnerability** on this repository (private vulnerability reporting is enabled). Email to v@valdemar.ai also works. The process is described at [heyvaldemar.com/security](https://heyvaldemar.com/security/).
+
+You can expect an acknowledgment within 7 days. This project does not operate a bounty program; researchers who submit valid, responsibly disclosed reports receive public credit in the release notes and the changelog.
+
+Please do not open public GitHub issues for security reports.
+
+## Supply chain trust
+
+This repository publishes a deployment template, not a custom software distribution. Upstream images are pinned by `tag@sha256:<digest>` as interpolation defaults in the compose file's `x-images` block, so a plain `git pull` delivers the exact combination this repository has tested. The Pin Freshness workflow re-resolves every pin daily and fails when one has drifted; the Deployment Verification workflow boots the full stack on every change and fails when it breaks. Either one notifies the maintainer. GitHub Actions are pinned by commit SHA.
+
+The README's "Supply chain trust" section lists the upstream images and where they come from.
+
+## Credentials
+
+`.env` is gitignored and required variables fail fast at deploy time. This repository has never tracked a credential value.
+
+The backups hold every account's password hash and every record; `NOCODB_JWT_SECRET` and `NOCODB_CONNECTION_ENCRYPT_KEY` are deliberately not in them. Keep the backups and the `.env` apart, and both as carefully as a credential.

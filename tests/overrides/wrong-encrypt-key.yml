@@ -1,0 +1,8 @@
+# tests/e2e-security.sh only: a key other than the one the connections were
+# encrypted with, as after a restore onto a host whose .env lost the key.
+# Never deploy with this file.
+services:
+  nocodb:
+    environment:
+      NC_CONNECTION_ENCRYPT_KEY: "not-the-key-the-connections-were-encrypted-with"
+      NC_ALLOW_LOCAL_EXTERNAL_DBS: "true"

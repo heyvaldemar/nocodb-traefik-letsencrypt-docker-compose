@@ -1,0 +1,7 @@
+# tests/e2e-security.sh only: NocoDB with NC_SECURE_ATTACHMENTS off, to show
+# what the shipped setting prevents (an attachment's plain URL served to
+# anyone). Never deploy with this file.
+services:
+  nocodb:
+    environment:
+      NC_SECURE_ATTACHMENTS: "false"
