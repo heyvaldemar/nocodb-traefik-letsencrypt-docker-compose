@@ -192,7 +192,7 @@ CI runs the default stack and checks that no Redis is running and NocoDB is poin
 
 Every service runs with `security_opt: no-new-privileges:true` and resource limits. NocoDB runs as its image's own `node` user (uid 1000) with every Linux capability dropped; its image runs as root, and declares no volume, so a one-shot `nocodb-init` container gives the data volume to uid 1000 with `CHOWN` alone, on no network, before NocoDB starts. CI reads the running NocoDB process's uid and effective capabilities (`0000000000000000`). Traefik, PostgreSQL, Redis and the backups container drop every capability and add back only what their entrypoints need: `NET_BIND_SERVICE` for Traefik, ownership and user switching for the database images, reading and writing other users' files for the backups. PostgreSQL and Redis listen on the internal network only; NocoDB is published nowhere but through Traefik.
 
-NocoDB's memory ceiling is 2 GB. Its peak under this repository's tests is printed on every CI run ("Peak memory of each service"), and on a workstation it was 890 MiB; NocoDB's own start script keeps V8 from optimising its SQL parser because that step alone takes about 1 GB, and large imports grow from there. Raise `NOCODB_MEMORY_LIMIT` if `docker inspect` reports `OOMKilled=true`.
+NocoDB's memory ceiling is 2 GB. Its peak under this repository's tests is printed on every CI run ("Peak memory of each service"): 691 MiB on the run that preceded v1.0.0, 890 MiB on a workstation. NocoDB's own start script keeps V8 from optimising its SQL parser because that step alone takes about 1 GB, and large imports grow from there. Raise `NOCODB_MEMORY_LIMIT` if `docker inspect` reports `OOMKilled=true`.
 
 ## Testing
 
