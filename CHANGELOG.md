@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_(no unreleased changes yet)_
+
+## [1.0.2] - 2026-10-28
+
 ### Security
 
 - **`redis:7.4` was rebuilt upstream**; the pin moved from `sha256:bd28fff4b665…` to `sha256:b6b6e3dc0c09…`. Same version, same tag, a rebuilt base image — the usual shape of a security fix in a base layer.
@@ -33,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Tests against the real stack, through Traefik**: `tests/e2e-security.sh` for every claim above, the "without this" ones both ways through test-only files in `tests/overrides/`; `tests/e2e-backup-restore.sh` for both restore scripts, judged through NocoDB: what was made before the backup comes back, what was made after it is gone, and NocoDB writes again. A second job runs the `redis` profile.
 - `update.sh`, an upgrade drill from the previous release on the same volumes, Trivy scans, daily pin freshness, signed release assets with SLSA provenance, Dependabot with auto-merge after verification, OpenSSF Scorecard, LICENSE and SECURITY.md.
 
-[Unreleased]: https://github.com/heyvaldemar/nocodb-traefik-letsencrypt-docker-compose/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/heyvaldemar/nocodb-traefik-letsencrypt-docker-compose/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/heyvaldemar/nocodb-traefik-letsencrypt-docker-compose/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/heyvaldemar/nocodb-traefik-letsencrypt-docker-compose/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/heyvaldemar/nocodb-traefik-letsencrypt-docker-compose/releases/tag/v1.0.0
