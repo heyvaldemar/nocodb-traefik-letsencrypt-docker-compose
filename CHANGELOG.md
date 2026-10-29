@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+_(no unreleased changes yet)_
+
+## [1.0.3] - 2026-10-29
+
 ### Changed
 
 - **`nocodb/nocodb:2026.10.0` moved to `nocodb/nocodb:2026.10.1`.** The freshness check reported the lag; the deploy job booted the stack on the new image before this landed.
@@ -39,7 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Tests against the real stack, through Traefik**: `tests/e2e-security.sh` for every claim above, the "without this" ones both ways through test-only files in `tests/overrides/`; `tests/e2e-backup-restore.sh` for both restore scripts, judged through NocoDB: what was made before the backup comes back, what was made after it is gone, and NocoDB writes again. A second job runs the `redis` profile.
 - `update.sh`, an upgrade drill from the previous release on the same volumes, Trivy scans, daily pin freshness, signed release assets with SLSA provenance, Dependabot with auto-merge after verification, OpenSSF Scorecard, LICENSE and SECURITY.md.
 
-[Unreleased]: https://github.com/heyvaldemar/nocodb-traefik-letsencrypt-docker-compose/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/heyvaldemar/nocodb-traefik-letsencrypt-docker-compose/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/heyvaldemar/nocodb-traefik-letsencrypt-docker-compose/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/heyvaldemar/nocodb-traefik-letsencrypt-docker-compose/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/heyvaldemar/nocodb-traefik-letsencrypt-docker-compose/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/heyvaldemar/nocodb-traefik-letsencrypt-docker-compose/releases/tag/v1.0.0
