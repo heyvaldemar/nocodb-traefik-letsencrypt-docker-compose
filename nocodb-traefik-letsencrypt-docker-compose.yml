@@ -9,7 +9,7 @@ x-images:
   traefik: &traefik-image ${TRAEFIK_IMAGE_TAG:-traefik:${TRAEFIK_IMAGE_VERSION:-3.7@sha256:1336e85aaed293bd63d005086e0dd013b04078b26aaeb1c18b26a2f928af7e65}}
   postgres: &postgres-image ${NOCODB_POSTGRES_IMAGE_TAG:-postgres:${NOCODB_POSTGRES_IMAGE_VERSION:-17@sha256:31ba9c94a03ada9988f2bb493a22a75eef3a185884533e5cdbcd498ea835b08f}}
   redis: &redis-image ${NOCODB_REDIS_IMAGE_TAG:-redis:${NOCODB_REDIS_IMAGE_VERSION:-7.4@sha256:b6b6e3dc0c0952737748e55d5d885272840c7e42ba41ab1d5489f693419882f5}}
-  nocodb: &nocodb-image ${NOCODB_IMAGE_TAG:-nocodb/nocodb:${NOCODB_IMAGE_VERSION:-2026.10.0@sha256:e8fee91b205b7c51df6e35a9d890d8b68b216e987ed3feb387c5478dff6df951}}
+  nocodb: &nocodb-image ${NOCODB_IMAGE_TAG:-nocodb/nocodb:${NOCODB_IMAGE_VERSION:-2026.10.1@sha256:8c2dd06896d95e750d55010e529972c22c1ee73b22dce321b1d2de2e7d5cd6ae}}
 
 networks:
   nocodb-network:
