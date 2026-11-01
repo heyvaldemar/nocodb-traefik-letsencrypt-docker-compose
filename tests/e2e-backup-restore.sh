@@ -67,7 +67,12 @@ signin() {
   : >"$T/auth"
   local tok
   tok="$(api POST /api/v1/auth/user/signin "$T/signin.json" | json 'd.get("token","")')"
-  [ -n "$tok" ] || return 1
+  if [ -z "$tok" ]; then
+    # Say why: a test that fails without the answer it got cannot be fixed
+    # from its log. A refused sign-in carries no token, so the body is safe.
+    echo "  sign-in answered HTTP $(cat "$T/code"): $(head -c 300 "$T/body" | tr '\n' ' ')"
+    return 1
+  fi
   printf 'xc-auth: %s\n' "$tok" >"$T/auth"
 }
 record() {  # name: add a record to the e2e table
@@ -157,7 +162,7 @@ test_database_restore() {
   echo "  restoring $(basename "$baseline") with ./nocodb-restore-database.sh"
   COMPOSE_PROJECT_NAME="$P" ./nocodb-restore-database.sh "$(basename "$baseline")" || { fail "the shipped restore script failed"; return 1; }
   wait_healthy 180 || { fail "NocoDB did not come back healthy after the restore"; return 1; }
-  signin || { fail "the admin from .env did not sign in to the restored database"; return 1; }
+  signin || { docker logs --tail 40 "$APP" 2>&1 | sed 's/^/  nocodb: /'; fail "the admin from .env did not sign in to the restored database"; return 1; }
   local got
   got="$(names)"
   [ "$got" = "made-before-the-backup" ] || { fail "after the restore the table holds: '$got'"; return 1; }
