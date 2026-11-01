@@ -53,7 +53,17 @@ BKP="$(cid backups)"; DB="$(cid postgres)"; APP="$(cid nocodb)"
 if [ -z "$BKP" ] || [ -z "$DB" ] || [ -z "$APP" ]; then echo "error: the stack is not up (backups, postgres, nocodb)" >&2; exit 1; fi
 bsh() { docker exec "$BKP" sh -c "$1"; }
 health() { docker inspect -f '{{.State.Health.Status}}' "$APP" 2>/dev/null; }
-wait_healthy() { for _ in $(seq 1 "${1:-180}"); do [ "$(health)" = healthy ] && return 0; sleep 1; done; return 1; }
+# Healthy in Docker is not yet reachable: Traefik adds the container only on
+# its health event, after the provider throttle, so a request made the moment
+# Docker says healthy can still get Traefik's 404. Wait for NocoDB through it.
+routed() {
+  for _ in $(seq 1 30); do
+    [ "$(curl -sk --resolve "$HOST:443:127.0.0.1" -o /dev/null -w '%{http_code}' "https://$HOST/api/v2/meta/nocodb/info")" = 200 ] && return 0
+    sleep 1
+  done
+  return 1
+}
+wait_healthy() { for _ in $(seq 1 "${1:-180}"); do [ "$(health)" = healthy ] && { routed; return; }; sleep 1; done; return 1; }
 json() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)" 2>/dev/null; }
 api() {  # method path [body-file]: prints the body; the status code is in $T/code
   local m=$1 p=$2 d=${3:-} data=()

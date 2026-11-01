@@ -55,12 +55,22 @@ wait_health() {  # status seconds
   for _ in $(seq 1 "$2"); do [ "$(health)" = "$1" ] && return 0; sleep 1; done
   return 1
 }
+# Healthy in Docker is not yet reachable: Traefik adds the container only on
+# its health event, after the provider throttle, so a request made the moment
+# Docker says healthy can still get Traefik's 404. Wait for NocoDB through it.
+routed() {
+  for _ in $(seq 1 30); do
+    [ "$(curl -sk --resolve "$HOST:443:127.0.0.1" -o /dev/null -w '%{http_code}' "https://$HOST/api/v2/meta/nocodb/info")" = 200 ] && return 0
+    sleep 1
+  done
+  return 1
+}
 # `docker compose up` with an extra file layered on, then wait for NocoDB.
 recreate() {
   local extra=()
   [ -n "${1:-}" ] && extra=(-f "tests/overrides/$1")
   docker compose -f "$F" ${extra[@]+"${extra[@]}"} -p "$P" up -d nocodb >/dev/null 2>&1 || return 1
-  wait_health healthy 180
+  wait_health healthy 180 && routed
 }
 json() { python3 -c "import json,sys; d=json.load(sys.stdin); print($1)" 2>/dev/null; }
 # A request through Traefik. The auth header comes from a file; a body, when
@@ -151,6 +161,7 @@ shipped="$(status_of /api/v2/meta/nocodb/info)"
 wait_health unhealthy 90 && pass "and Docker marks NocoDB unhealthy" || fail "PostgreSQL stopped and NocoDB still $(health)"
 docker start "$(cid postgres)" >/dev/null
 wait_health healthy 120 && pass "PostgreSQL back: healthy again" || fail "PostgreSQL back and NocoDB still $(health)"
+routed || fail "NocoDB is healthy again but Traefik does not route to it"
 
 echo
 echo "=== private networks ==="
